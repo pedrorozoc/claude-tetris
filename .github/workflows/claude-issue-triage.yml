@@ -1,0 +1,93 @@
+name: Claude Issue Triage
+
+on:
+  issues:
+    types: [opened, edited]
+
+concurrency:
+  group: issue-triage-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    # Evita re-disparos provocados por acciones de bots
+    if: github.event.sender.type != 'Bot'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write # aplicar labels + publicar/editar comentario
+      id-token: write # OIDC para claude-code-action
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude issue triage
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: >-
+            --allowedTools "Bash(gh issue view:*),Bash(gh label list:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(gh api:*),Write,Read"
+          prompt: |
+            Eres el clasificador (triage) de issues de este repositorio: un Tetris
+            en JavaScript vanilla con Canvas 2D, sin dependencias ni build. Toda la
+            lógica vive en `game.js`. Consulta `CLAUDE.md` para la arquitectura.
+
+            Issue afectado: #${{ github.event.issue.number }}
+            Acción del evento: ${{ github.event.action }}
+            Repositorio: ${{ github.repository }}
+
+            Sigue estos pasos en orden:
+
+            1. Lee el issue completo:
+               `gh issue view ${{ github.event.issue.number }} --json title,body,labels,author,comments`
+
+            2. Lista las etiquetas disponibles en el repo:
+               `gh label list --limit 100`
+
+            3. Asigna etiquetas usando SOLO nombres que aparezcan en esa lista
+               (no crees etiquetas nuevas). Elige como máximo una etiqueta de
+               tipo (p. ej. `bug`, `enhancement`, `question`, `documentation`) y
+               las demás que correspondan y existan. Aplícalas con:
+               `gh issue edit ${{ github.event.issue.number }} --add-label "NOMBRE"`
+               No quites etiquetas puestas por personas salvo que sean claramente
+               contradictorias. Si ninguna etiqueta encaja, no asignes ninguna.
+
+            4. Redacta un diagnóstico EN ESPAÑOL. La primera línea debe ser
+               exactamente el marcador oculto:
+               `<!-- claude-issue-triage -->`
+               y a continuación estas secciones en Markdown:
+               - **Resumen**
+               - **Tipo y severidad**
+               - **Áreas / archivos afectados**: referencia funciones concretas de
+                 `game.js` (`loop`, `draw`, `spawn`, `lockPiece`, `merge`,
+                 `clearLines`, `tryRotate`, `collide`, `updateHUD`, `init`, ...) y
+                 constantes acopladas.
+               - **Causa probable / análisis**
+               - **Reproducción**: pasos, solo si es un bug.
+               - **Propuesta de solución**: pasos concretos de implementación que
+                 sirvan de guía para programar la solución después.
+               - **Riesgos / efectos colaterales**: p. ej. `COLS`/`ROWS`/`BLOCK`
+                 vs. el tamaño del `<canvas>` en `index.html`, refrescos ad-hoc del
+                 HUD, curva de nivel/velocidad.
+               - **Preguntas abiertas**: si el issue es ambiguo o le falta
+                 información.
+               - **Complejidad estimada**: pequeña / media / grande.
+
+            5. Publica o actualiza el comentario (no dupliques):
+               - Busca un comentario propio previo:
+                 `gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments --jq '.[] | select(.body | startswith("<!-- claude-issue-triage -->")) | .id'`
+               - Escribe el cuerpo del diagnóstico a un archivo temporal con la
+                 herramienta Write (p. ej. `/tmp/triage.md`).
+               - Si encontraste un id: edítalo con
+                 `gh api --method PATCH repos/${{ github.repository }}/issues/comments/ID -F body=@/tmp/triage.md`
+               - Si no existe: créalo con
+                 `gh issue comment ${{ github.event.issue.number }} --body-file /tmp/triage.md`
+
+            Restricciones:
+            - NO modifiques el título ni el cuerpo del issue.
+            - NO escribas ni modifiques código del juego. Solo etiquetas y el
+              comentario de diagnóstico.
+            - Sé conciso y accionable.
