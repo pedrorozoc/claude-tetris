@@ -91,10 +91,30 @@
       </aside>
     </div>
 
+    <div id="start-menu" class="overlay hidden">
+      <div class="overlay-box">
+        <p id="start-title">TETRIS</p>
+        <div class="records-panel">
+          <p class="records-heading">RECORDS</p>
+          <div class="records-list" id="start-records"></div>
+          <p class="records-stats" id="start-stats"></p>
+        </div>
+        <button id="play-btn">JUGAR</button>
+        <button id="reset-records-start" class="reset-records-btn">Resetear records</button>
+      </div>
+    </div>
+
     <div id="overlay" class="overlay hidden">
       <div class="overlay-box">
         <p id="overlay-title">GAME OVER</p>
         <p id="overlay-score"></p>
+        <div id="overlay-records" class="records-list hidden"></div>
+        <p id="overlay-stats" class="records-stats hidden"></p>
+        <div id="record-entry" class="record-entry hidden">
+          <input id="record-name" type="text" maxlength="12" placeholder="Tu nombre" />
+          <button id="save-record-btn">Guardar</button>
+        </div>
+        <button id="reset-records-overlay" class="reset-records-btn hidden">Resetear records</button>
         <button id="restart-btn">Reiniciar</button>
       </div>
     </div>
