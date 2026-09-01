@@ -57,6 +57,37 @@ const CHALLENGE_KEY = 'tetris-challenge';
 const START_LEVEL_KEY = 'tetris-start-level';
 const GARBAGE_COLOR = 8;
 
+// ---- Temas visuales / skins ----
+// render: 'flat' (actual) | 'glow' | 'rounded' | 'pixel'.
+// colors: 9 entradas, índice 0 = null (igual que COLORS).
+// boardBg / grid: null => respeta los valores del tema; string => sobreescribe.
+const SKIN_KEY = 'tetris-skin';
+const SKINS = [
+  {
+    id: 'retro', name: 'Retro', render: 'flat',
+    colors: COLORS, boardBg: null, grid: null,
+  },
+  {
+    id: 'neon', name: 'Neon', render: 'glow',
+    colors: [null, '#00e5ff', '#ffea00', '#d500f9', '#00e676', '#ff1744',
+             '#2979ff', '#ff9100', '#b0bec5', '#e040fb'],
+    boardBg: '#05050a', grid: '#12121f',
+  },
+  {
+    id: 'pastel', name: 'Pastel', render: 'rounded',
+    colors: [null, '#a0e7e5', '#fbe7a1', '#d9b8ec', '#b5ead7', '#ffb7b2',
+             '#a7c7ff', '#ffd8a8', '#d6dde1', '#f3bff0'],
+    boardBg: '#f6f4fb', grid: '#e6e2f0',
+  },
+  {
+    id: 'pixel', name: 'Pixel art', render: 'pixel',
+    colors: [null, '#4a9ca8', '#c8a94a', '#8f5aa8', '#5f9c66', '#b25a5a',
+             '#4a72b2', '#c8894a', '#6b7a85', '#a84ab2'],
+    boardBg: '#14141c', grid: '#20202c',
+  },
+];
+const SKIN_BY_ID = Object.fromEntries(SKINS.map(s => [s.id, s]));
+
 // Modo desafío: cada entrada define objetivo y/o modificador de reglas.
 // Flags leídos por el motor: goalLines, timeLimitMs, surviveMs, garbageEveryMs,
 // setup(), hideSettled, reverseRotAtLevel, level, dropInterval.
@@ -132,6 +163,7 @@ const recordEntryEl = document.getElementById('record-entry');
 const recordNameEl = document.getElementById('record-name');
 const saveRecordBtn = document.getElementById('save-record-btn');
 const resetRecordsOverlayBtn = document.getElementById('reset-records-overlay');
+const skinSelect = document.getElementById('skin-select');
 
 const THEME_KEY = 'tetris-theme';
 const HISCORE_KEY = 'tetris-hiscores';
@@ -147,6 +179,8 @@ let startLevel = 1;
 const effects = [];
 let soundOn = true;
 let audioCtx = null;
+let skinColors = COLORS;
+let activeSkin = SKINS[0];
 let records = loadRecords();
 
 // ---- Tabla de records local ----
@@ -262,6 +296,36 @@ function applyTheme(theme) {
 
 function initTheme() {
   applyTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark');
+}
+
+// Fija la skin activa: persiste, cambia la paleta de bloques, sobreescribe
+// (o libera) --board-bg / --grid-color, recalcula gridColor y repinta.
+function applySkin(id) {
+  const skin = SKIN_BY_ID[id] || SKINS[0];
+  activeSkin = skin;
+  skinColors = skin.colors || COLORS;
+  localStorage.setItem(SKIN_KEY, skin.id);
+  const rootStyle = document.documentElement.style;
+  if (skin.boardBg) rootStyle.setProperty('--board-bg', skin.boardBg);
+  else rootStyle.removeProperty('--board-bg');
+  if (skin.grid) rootStyle.setProperty('--grid-color', skin.grid);
+  else rootStyle.removeProperty('--grid-color');
+  gridColor = getComputedStyle(document.documentElement).getPropertyValue('--grid-color').trim();
+  if (skinSelect) skinSelect.value = skin.id;
+  if (typeof board !== 'undefined' && board) { draw(); drawNext(); drawHold(); }
+}
+
+function initSkin() {
+  if (!skinSelect) return;
+  skinSelect.innerHTML = '';
+  for (const s of SKINS) {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name;
+    skinSelect.appendChild(opt);
+  }
+  const saved = localStorage.getItem(SKIN_KEY);
+  applySkin(SKIN_BY_ID[saved] ? saved : 'retro');
 }
 
 function initSound() {
@@ -803,13 +867,50 @@ function challengeHud() {
 
 function drawBlock(context, x, y, colorIndex, size, alpha) {
   if (!colorIndex) return;
-  const color = COLORS[colorIndex];
+  const color = skinColors[colorIndex];
+  const render = activeSkin ? activeSkin.render : 'flat';
+  const px = x * size + 1, py = y * size + 1, s = size - 2;
   context.globalAlpha = alpha ?? 1;
-  context.fillStyle = color;
-  context.fillRect(x * size + 1, y * size + 1, size - 2, size - 2);
-  // highlight
-  context.fillStyle = 'rgba(255,255,255,0.12)';
-  context.fillRect(x * size + 1, y * size + 1, size - 2, 4);
+
+  if (render === 'glow') {
+    context.shadowColor = color;
+    context.shadowBlur = Math.max(8, size * 0.4);
+    context.fillStyle = color;
+    context.fillRect(px, py, s, s);
+    context.shadowBlur = 0;
+    context.fillStyle = 'rgba(255,255,255,0.12)';
+    context.fillRect(px, py, s, 4);
+  } else if (render === 'rounded') {
+    context.fillStyle = color;
+    if (context.roundRect) {
+      context.beginPath();
+      context.roundRect(px, py, s, s, 5);
+      context.fill();
+    } else {
+      context.fillRect(px, py, s, s);
+    }
+    context.fillStyle = 'rgba(255,255,255,0.18)';
+    context.fillRect(px + 2, py + 2, s - 4, 3);
+  } else if (render === 'pixel') {
+    context.fillStyle = color;
+    context.fillRect(px, py, s, s);
+    // textura determinista: puntos oscuros/claros fijos por bloque
+    const u = Math.max(2, Math.floor(size / 10));
+    const mid = Math.floor(s / 2) - Math.floor(u / 2);
+    context.fillStyle = 'rgba(0,0,0,0.22)';
+    context.fillRect(px + u, py + u, u, u);
+    context.fillRect(px + s - 2 * u, py + u, u, u);
+    context.fillRect(px + mid, py + mid, u, u);
+    context.fillRect(px + u, py + s - 2 * u, u, u);
+    context.fillStyle = 'rgba(255,255,255,0.16)';
+    context.fillRect(px + s - 2 * u, py + s - 2 * u, u, u);
+  } else {
+    // flat: comportamiento original (idéntico a la skin Retro)
+    context.fillStyle = color;
+    context.fillRect(px, py, s, s);
+    context.fillStyle = 'rgba(255,255,255,0.12)';
+    context.fillRect(px, py, s, 4);
+  }
   context.globalAlpha = 1;
 }
 
@@ -842,6 +943,7 @@ function drawGrid() {
 }
 
 function draw() {
+  ctx.shadowBlur = 0;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawGrid();
 
@@ -891,7 +993,7 @@ function drawPeek() {
     for (let r = 0; r < sh.length; r++)
       for (let c = 0; c < sh[r].length; c++)
         if (sh[r][c]) {
-          ctx.fillStyle = COLORS[sh[r][c]];
+          ctx.fillStyle = skinColors[sh[r][c]];
           ctx.fillRect(ox + c * cell + 1, oy + r * cell + 1, cell - 2, cell - 2);
         }
   }
@@ -1217,6 +1319,9 @@ challengeSelect.addEventListener('change', () => {
   localStorage.setItem(CHALLENGE_KEY, challengeSelect.value);
   init();
 });
+skinSelect.addEventListener('change', e => {
+  applySkin(e.target.value);
+});
 
 // Nivel inicial: solo se persiste; init() lo relee, así afecta a la PRÓXIMA
 // partida y no altera la velocidad de la partida en curso.
@@ -1236,5 +1341,6 @@ initTheme();
 initSound();
 initChallengeUI();
 initStartLevel();
+initSkin();
 initAbilityMenu();
 showStartMenu();
