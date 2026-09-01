@@ -40,6 +40,41 @@ const TSPIN_SCORES = [400, 800, 1200, 1600];   // índice = líneas limpiadas (0
 const PERFECT_SCORES = [0, 800, 1200, 1800, 2000];
 const B2B_MULT = 1.5;
 const SOUND_KEY = 'tetris-sound';
+const CHALLENGE_KEY = 'tetris-challenge';
+const GARBAGE_COLOR = 8;
+
+// Modo desafío: cada entrada define objetivo y/o modificador de reglas.
+// Flags leídos por el motor: goalLines, timeLimitMs, surviveMs, garbageEveryMs,
+// setup(), hideSettled, reverseRotAtLevel, level, dropInterval.
+const CHALLENGES = [
+  { id: 'classic', name: 'Clásico', desc: 'Juego normal, sin objetivo.' },
+  {
+    id: 'sprint40', name: 'Sprint 40',
+    desc: 'Limpia 40 líneas antes de 2:00.',
+    goalLines: 40, timeLimitMs: 120000,
+  },
+  {
+    id: 'garbage', name: 'Basura ascendente',
+    desc: 'Sobrevive 90s. Sube una fila de basura cada 10s.',
+    surviveMs: 90000, garbageEveryMs: 10000,
+  },
+  {
+    id: 'preset', name: 'Tablero pre-colocado',
+    desc: 'Empiezas con basura fija. Limpia 20 líneas.',
+    goalLines: 20, setup: setupPreset,
+  },
+  {
+    id: 'invisible', name: 'Piezas invisibles',
+    desc: 'La pila desaparece al aterrizar. Limpia 10 líneas.',
+    goalLines: 10, hideSettled: true,
+  },
+  {
+    id: 'reverse', name: 'Rotación inversa',
+    desc: 'Desde nivel 3 la rotación se invierte. Limpia 40 líneas.',
+    goalLines: 40, reverseRotAtLevel: 3, level: 2, dropInterval: 820,
+  },
+];
+const CHALLENGE_BY_ID = Object.fromEntries(CHALLENGES.map(c => [c.id, c]));
 
 const canvas = document.getElementById('board');
 const ctx = canvas.getContext('2d');
@@ -56,6 +91,9 @@ const themeSwitch = document.getElementById('theme-switch');
 const powerupEl = document.getElementById('powerup');
 const comboEl = document.getElementById('combo');
 const soundSwitch = document.getElementById('sound-switch');
+const challengeSelect = document.getElementById('challenge-select');
+const goalEl = document.getElementById('goal');
+const challengeDescEl = document.getElementById('challenge-desc');
 
 const THEME_KEY = 'tetris-theme';
 
@@ -63,6 +101,7 @@ let board, current, next, score, lines, level, paused, gameOver, lastTime, dropA
 let gridColor;
 let freezeUntil, freezeRemaining, powerPending, nextPowerAt;
 let comboCount, b2bActive, b2bCount, lastRotation, flashUntil;
+let challenge, challengeTime, garbageAccum, challengeStatus, revealUntil;
 const effects = [];
 let soundOn = true;
 let audioCtx = null;
@@ -81,6 +120,23 @@ function initTheme() {
 function initSound() {
   soundOn = localStorage.getItem(SOUND_KEY) !== 'off';
   soundSwitch.checked = soundOn;
+}
+
+function initChallengeUI() {
+  challengeSelect.innerHTML = '';
+  for (const c of CHALLENGES) {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = c.name;
+    challengeSelect.appendChild(opt);
+  }
+  const saved = localStorage.getItem(CHALLENGE_KEY);
+  challengeSelect.value = CHALLENGE_BY_ID[saved] ? saved : 'classic';
+}
+
+function fmtTime(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
 function createBoard() {
@@ -128,8 +184,13 @@ function rotateCW(shape) {
   return result;
 }
 
+function rotateCCW(shape) {
+  return rotateCW(rotateCW(rotateCW(shape)));
+}
+
 function tryRotate() {
-  const rotated = rotateCW(current.shape);
+  const reverse = challenge && challenge.reverseRotAtLevel && level >= challenge.reverseRotAtLevel;
+  const rotated = reverse ? rotateCCW(current.shape) : rotateCW(current.shape);
   const kicks = [0, -1, 1, -2, 2];
   for (const kick of kicks) {
     if (!collide(rotated, current.x + kick, current.y)) {
@@ -214,13 +275,14 @@ function resolveClears(tSpin) {
 
   announceClears({ cleared, tSpin, difficult, perfect, b2bApplied, comboMult, gained });
 
-  level = Math.floor(lines / 10) + 1;
+  level = Math.floor(lines / 10) + 1 + (challenge && challenge.level ? challenge.level - 1 : 0);
   dropInterval = Math.max(100, 1000 - (level - 1) * 90);
   if (lines >= nextPowerAt) {
     powerPending = true;
     nextPowerAt += POWER_EVERY;
   }
   updateHUD();
+  checkChallenge();
 }
 
 function announceClears(info) {
@@ -430,7 +492,9 @@ function lockPiece() {
   const tSpin = detectTSpin();
   merge();
   if (current.power) applyPowerUp(current.power, current.x, current.y);
+  if (challenge && challenge.hideSettled) revealUntil = performance.now() + 500;
   resolveClears(tSpin);
+  if (challengeStatus !== 'playing' || gameOver) return;
   spawn();
 }
 
@@ -465,6 +529,17 @@ function updateHUD() {
   } else {
     comboEl.textContent = '—';
   }
+
+  goalEl.textContent = challenge ? challengeHud() : '—';
+}
+
+function challengeHud() {
+  const parts = [];
+  if (challenge.goalLines) parts.push(`${Math.min(lines, challenge.goalLines)}/${challenge.goalLines} líneas`);
+  if (challenge.timeLimitMs) parts.push(`⏳ ${fmtTime(challenge.timeLimitMs - challengeTime)}`);
+  else if (challenge.surviveMs) parts.push(`⏱ ${fmtTime(challengeTime)} / ${fmtTime(challenge.surviveMs)}`);
+  if (challenge.garbageEveryMs) parts.push(`🗑 ${Math.ceil((challenge.garbageEveryMs - garbageAccum) / 1000)}s`);
+  return parts.join('   ') || '—';
 }
 
 function drawBlock(context, x, y, colorIndex, size, alpha) {
@@ -511,17 +586,23 @@ function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawGrid();
 
-  // board
-  for (let r = 0; r < ROWS; r++)
-    for (let c = 0; c < COLS; c++)
-      drawBlock(ctx, c, r, board[r][c], BLOCK);
+  const hideStack = challenge && challenge.hideSettled && performance.now() >= revealUntil;
 
-  // ghost
-  const gy = ghostY();
-  for (let r = 0; r < current.shape.length; r++)
-    for (let c = 0; c < current.shape[r].length; c++)
-      if (current.shape[r][c])
-        drawBlock(ctx, current.x + c, gy + r, current.shape[r][c], BLOCK, 0.2);
+  // board
+  if (!hideStack) {
+    for (let r = 0; r < ROWS; r++)
+      for (let c = 0; c < COLS; c++)
+        drawBlock(ctx, c, r, board[r][c], BLOCK);
+  }
+
+  // ghost (oculto cuando la pila es invisible: revelaría el aterrizaje)
+  if (!hideStack) {
+    const gy = ghostY();
+    for (let r = 0; r < current.shape.length; r++)
+      for (let c = 0; c < current.shape[r].length; c++)
+        if (current.shape[r][c])
+          drawBlock(ctx, current.x + c, gy + r, current.shape[r][c], BLOCK, 0.2);
+  }
 
   // current piece
   for (let r = 0; r < current.shape.length; r++)
@@ -548,11 +629,57 @@ function drawNext() {
 }
 
 function endGame() {
+  if (gameOver) return;
+  if (challenge) { endChallenge(false, 'Tablero lleno'); return; }
   gameOver = true;
   cancelAnimationFrame(animId);
   overlayTitle.textContent = 'GAME OVER';
   overlayScore.textContent = `Puntuación: ${score.toLocaleString()}`;
   overlay.classList.remove('hidden');
+}
+
+function endChallenge(won, reason) {
+  if (challengeStatus !== 'playing') return;
+  challengeStatus = won ? 'won' : 'lost';
+  gameOver = true;
+  cancelAnimationFrame(animId);
+  draw();
+  overlayTitle.textContent = won ? '¡DESAFÍO SUPERADO!' : 'DESAFÍO FALLIDO';
+  const bits = [`${challenge.name}`, `Líneas: ${lines}`, `Tiempo: ${fmtTime(challengeTime)}`];
+  if (reason) bits.push(reason);
+  overlayScore.textContent = bits.join('  ·  ');
+  overlay.classList.remove('hidden');
+  playSound(won ? 'perfect' : 'tspin');
+}
+
+function checkChallenge() {
+  if (!challenge || challengeStatus !== 'playing') return;
+  if (challenge.goalLines && lines >= challenge.goalLines) { endChallenge(true); return; }
+  if (challenge.surviveMs && challengeTime >= challenge.surviveMs) { endChallenge(true); return; }
+  if (challenge.timeLimitMs && challengeTime >= challenge.timeLimitMs) {
+    endChallenge(false, 'Se acabó el tiempo');
+  }
+}
+
+function addGarbageRow() {
+  const hole = Math.floor(Math.random() * COLS);
+  const row = new Array(COLS).fill(GARBAGE_COLOR);
+  row[hole] = 0;
+  const displaced = board.shift();
+  board.push(row);
+  if (displaced.some(v => v !== 0)) { endChallenge(false, 'La basura te enterró'); return; }
+  // el campo sube: la pieza activa sube con él si hay espacio
+  if (!collide(current.shape, current.x, current.y - 1)) current.y--;
+  else if (collide(current.shape, current.x, current.y)) endChallenge(false, 'La basura te enterró');
+}
+
+function setupPreset() {
+  for (let r = ROWS - 9; r < ROWS; r++) {
+    const gapA = (r * 3) % COLS;
+    const gapB = (r * 7 + 4) % COLS;
+    for (let c = 0; c < COLS; c++)
+      board[r][c] = (c === gapA || c === gapB) ? 0 : ((r + c) % 6) + 1;
+  }
 }
 
 function togglePause() {
@@ -576,6 +703,20 @@ function loop(ts) {
   const dt = ts - lastTime;
   lastTime = ts;
   const frozen = performance.now() < freezeUntil;
+
+  if (challenge && challengeStatus === 'playing' && !frozen) {
+    challengeTime += dt;
+    if (challenge.garbageEveryMs) {
+      garbageAccum += dt;
+      if (garbageAccum >= challenge.garbageEveryMs) {
+        garbageAccum -= challenge.garbageEveryMs;
+        addGarbageRow();
+      }
+    }
+    checkChallenge();
+    if (gameOver) return;
+  }
+
   dropAccum += dt;
   if (frozen) {
     dropAccum = 0;
@@ -595,13 +736,16 @@ function loop(ts) {
 }
 
 function init() {
+  challenge = CHALLENGE_BY_ID[challengeSelect.value] || null;
+  if (challenge && challenge.id === 'classic') challenge = null;
+
   board = createBoard();
   score = 0;
   lines = 0;
-  level = 1;
+  level = challenge && challenge.level ? challenge.level : 1;
   paused = false;
   gameOver = false;
-  dropInterval = 1000;
+  dropInterval = challenge && challenge.dropInterval ? challenge.dropInterval : 1000;
   dropAccum = 0;
   lastTime = performance.now();
   freezeUntil = 0;
@@ -614,6 +758,14 @@ function init() {
   lastRotation = false;
   flashUntil = 0;
   effects.length = 0;
+  challengeTime = 0;
+  garbageAccum = 0;
+  challengeStatus = challenge ? 'playing' : 'none';
+  revealUntil = 0;
+
+  if (challenge && challenge.setup) challenge.setup();
+  challengeDescEl.textContent = challenge ? challenge.desc : '';
+
   next = nextPiece();
   spawn();
   updateHUD();
@@ -656,7 +808,12 @@ soundSwitch.addEventListener('change', () => {
   localStorage.setItem(SOUND_KEY, soundOn ? 'on' : 'off');
   if (soundOn) playSound('clear');
 });
+challengeSelect.addEventListener('change', () => {
+  localStorage.setItem(CHALLENGE_KEY, challengeSelect.value);
+  init();
+});
 
 initTheme();
 initSound();
+initChallengeUI();
 init();

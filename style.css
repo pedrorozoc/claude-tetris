@@ -131,6 +131,24 @@ body {
   letter-spacing: 0;
 }
 
+.hint {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--controls-color);
+}
+
+.challenge-select {
+  width: 100%;
+  background: var(--kbd-bg);
+  color: var(--fg);
+  border: 1px solid var(--kbd-border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
 #next-canvas {
   display: block;
   border: 1px solid var(--board-border);

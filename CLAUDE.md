@@ -72,6 +72,22 @@ All game logic lives in `game.js` as a single top-level script under
   encola textos flotantes en `effects[]` (render `drawEffects`), dispara
   `flashUntil` (render `drawFlash`) y `playSound` (Web Audio, sin assets;
   interruptor SONIDO en el panel, persistido en `localStorage` `tetris-sound`).
+- **Modo desafío** (`CHALLENGES`, selector `#challenge-select` en el panel):
+  `init()` lee `challengeSelect.value`, resuelve el objeto de `CHALLENGE_BY_ID`
+  (`'classic'` => `challenge = null`) y guarda la elección en `localStorage`
+  (`tetris-challenge`). Cada desafío es un conjunto de flags que el motor
+  interpreta genéricamente, sin lógica por-id dispersa: `goalLines`,
+  `timeLimitMs`, `surviveMs`, `garbageEveryMs`, `setup()`, `hideSettled`,
+  `reverseRotAtLevel`, `level`/`dropInterval` iniciales. `challengeStatus`
+  (`'none'|'playing'|'won'|'lost'`), `challengeTime` y `garbageAccum` se acumulan
+  en `loop` sólo si `!frozen`. `checkChallenge()` (llamado desde `loop` y al final
+  de `resolveClears`) evalúa victoria/derrota y llama `endChallenge(won, reason)`,
+  que reusa el overlay. `endGame()` en modo desafío redirige a
+  `endChallenge(false, 'Tablero lleno')`. `lockPiece` corta antes de `spawn()` si
+  el desafío terminó. Modificadores de reglas: `addGarbageRow()` (empuja el campo
+  y sube la pieza), `setupPreset()` rellena 9 filas dentadas, `tryRotate` usa
+  `rotateCCW` si `level >= reverseRotAtLevel`, y `draw()` omite pila + ghost
+  cuando `hideSettled` y ya pasó `revealUntil` (ventana de 500 ms tras cada lock).
 - **Pause** (`togglePause`) cancels the RAF, shows the overlay, and on resume
   reseeds `lastTime` before restarting `loop` so no huge `dt` is accumulated.
 - HUD (`updateHUD`) is refreshed ad hoc from several call sites (keydown handler,
