@@ -45,9 +45,11 @@ All game logic lives in `game.js` as a single top-level script under
 - **Rotation with wall kicks**: `tryRotate` rotates, then tries horizontal
   offsets `[0, -1, 1, -2, 2]` and keeps the first that doesn't `collide`.
 - **Lock / spawn cycle**: `lockPiece` -> `merge` -> (`applyPowerUp` if
-  `current.power`) -> `clearLines` -> `spawn`. `spawn` promotes `next` to
-  `current`, rolls a new `next` via `nextPiece()`, and if the new piece already
-  collides it calls `endGame()` (that is the only game-over check).
+  `current.power`) -> `resolveClears` -> `spawn`. `spawn` toma `current` del
+  frente de `queue`, empuja una pieza nueva (`nextPiece()`) al final y fija
+  `next = queue[0]`; si la nueva pieza ya colisiona llama `endGame()` (único
+  chequeo de game-over). `clearLines` se dividió en `clearFullRows()` (splice) +
+  `resolveClears()` (scoring de combos + energía).
 - **Power-ups**: every `POWER_EVERY` (5) cleared lines, `clearLines` sets
   `powerPending`; the next `nextPiece()` returns a 1x1 block (`type: 9`,
   `shape: [[9]]`, `power: <kind>`) from `makePowerUp()` instead of `randomPiece()`
@@ -88,6 +90,32 @@ All game logic lives in `game.js` as a single top-level script under
   y sube la pieza), `setupPreset()` rellena 9 filas dentadas, `tryRotate` usa
   `rotateCCW` si `level >= reverseRotAtLevel`, y `draw()` omite pila + ghost
   cuando `hideSettled` y ya pasó `revealUntil` (ventana de 500 ms tras cada lock).
+- **Habilidades cargables** (`ABILITIES`, barra `#energy-fill`, overlay
+  `#ability-menu`): `resolveClears()` suma `ENERGY_PER_CLEAR[cleared]` a `energy`
+  (cap `ENERGY_MAX = 100`). Con la barra llena, `E` abre `openAbilityMenu()`, que
+  cancela la RAF (congela como la pausa) y marca deshabilitados los botones
+  `undo` (sin `lastPlacement`) y `hold` (si ya `holdUnlocked`). Teclas `1`–`5` o
+  click → `pickAbility()` → `energy = 0` → `runAbility()` → `resumeClock()` +
+  `loop()`. `Esc`/`E` = `closeAbilityMenu()` sin gastar. `resumeClock()`
+  centraliza el reseed de `lastTime` y la restauración de `freezeUntil`/
+  `slowUntil` desde `*Remaining` (usado por pausa y menú).
+  - **Cola de piezas**: `queue` (longitud `QUEUE_LEN = 5`) sustituye al `next`
+    único; `spawn()` hace `current = queue.shift(); queue.push(nextPiece())` y
+    `next = queue[0]` (alias que conservan `drawNext`/`updateHUD`). El power-up
+    entra por el final de la cola (aparece hasta 5 piezas después).
+  - **peek5**: `peekLocks = 5`, decrementa en cada `spawn()`; `drawPeek()`
+    superpone las 5 próximas piezas arriba a la derecha del tablero.
+  - **swap**: reemplaza `current` por `randomPiece()` (evita el mismo tipo).
+  - **slow**: `slowUntil`; en `loop()` la gravedad usa
+    `dropInterval * SLOW_FACTOR`. No frena el temporizador de Desafío.
+  - **undo**: `snapshotPlacement()` se llama en cada ruta de bloqueo
+    (`hardDrop`/`softDrop`/`loop`) ANTES de mutar score/board y solo para piezas
+    normales (`if (current.power) return`); `doUndo()` restaura board, cola,
+    `current` (reposicionada a spawn), score/lines/level/combo/B2B, `holdPiece`,
+    `peekLocks`, y estado de Desafío. `energy` NO se restaura. Un solo uso.
+  - **hold**: pone `holdUnlocked = true`. Después, `C` llama `doHold()` con la
+    regla clásica (`holdUsed`, reset en `spawn()`); `drawHold()` pinta la pieza
+    reservada en `#hold-canvas` (atenuada si `holdUsed`).
 - **Pause** (`togglePause`) cancels the RAF, shows the overlay, and on resume
   reseeds `lastTime` before restarting `loop` so no huge `dt` is accumulated.
 - HUD (`updateHUD`) is refreshed ad hoc from several call sites (keydown handler,

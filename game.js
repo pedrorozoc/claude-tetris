@@ -19,6 +19,20 @@ const COLORS = [
 
 const POWER_EVERY = 5;
 const POWERUPS = ['bomb', 'ray', 'dye', 'gravity', 'freeze'];
+
+// ---- Habilidades cargables ----
+const ENERGY_MAX = 100;
+const ENERGY_PER_CLEAR = [0, 12, 28, 46, 70];   // índice = líneas en un clear (cap a ENERGY_MAX)
+const SLOW_MS = 10000;
+const SLOW_FACTOR = 3;                           // gravedad 3x más lenta
+const QUEUE_LEN = 5;
+const ABILITIES = [
+  { id: 'peek5', name: 'Ver 5 piezas',       desc: 'Revela las próximas 5 piezas durante 5 colocaciones.' },
+  { id: 'swap',  name: 'Intercambiar pieza', desc: 'Cambia la pieza actual por otra aleatoria del pool.' },
+  { id: 'slow',  name: 'Ralentizar tiempo',  desc: 'La caída va 3x más lenta durante 10s.' },
+  { id: 'undo',  name: 'Deshacer',           desc: 'Revierte tu última colocación.' },
+  { id: 'hold',  name: 'Reservar pieza',     desc: 'Desbloquea el hold permanente (tecla C).' },
+];
 const POWERUP_GLYPH = { bomb: '💣', ray: '⚡', dye: '🎨', gravity: '⬇', freeze: '❄' };
 const POWERUP_NAME = { bomb: 'BOMBA', ray: 'RAYO', dye: 'TINTE', gravity: 'GRAVEDAD', freeze: 'CONGELAR' };
 const FREEZE_MS = 5000;
@@ -94,6 +108,13 @@ const soundSwitch = document.getElementById('sound-switch');
 const challengeSelect = document.getElementById('challenge-select');
 const goalEl = document.getElementById('goal');
 const challengeDescEl = document.getElementById('challenge-desc');
+const energyFillEl = document.getElementById('energy-fill');
+const energyTrackEl = document.getElementById('energy-track');
+const energyHintEl = document.getElementById('energy-hint');
+const holdCanvas = document.getElementById('hold-canvas');
+const holdCtx = holdCanvas.getContext('2d');
+const abilityMenu = document.getElementById('ability-menu');
+const abilityListEl = document.getElementById('ability-list');
 
 const THEME_KEY = 'tetris-theme';
 
@@ -102,6 +123,8 @@ let gridColor;
 let freezeUntil, freezeRemaining, powerPending, nextPowerAt;
 let comboCount, b2bActive, b2bCount, lastRotation, flashUntil;
 let challenge, challengeTime, garbageAccum, challengeStatus, revealUntil;
+let energy, abilityMenuOpen, slowUntil, slowRemaining;
+let queue, peekLocks, holdPiece, holdUnlocked, holdUsed, lastPlacement;
 const effects = [];
 let soundOn = true;
 let audioCtx = null;
@@ -139,6 +162,19 @@ function fmtTime(ms) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
+function initAbilityMenu() {
+  abilityListEl.innerHTML = '';
+  ABILITIES.forEach((a, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'ability-btn';
+    btn.dataset.ability = a.id;
+    btn.innerHTML = `<span class="ability-key">${i + 1}</span>` +
+      `<span class="ability-text"><b>${a.name}</b><small>${a.desc}</small></span>`;
+    btn.addEventListener('click', () => pickAbility(a.id));
+    abilityListEl.appendChild(btn);
+  });
+}
+
 function createBoard() {
   return Array.from({ length: ROWS }, () => new Array(COLS).fill(0));
 }
@@ -147,6 +183,21 @@ function randomPiece() {
   const type = Math.floor(Math.random() * 8) + 1;
   const shape = PIECES[type].map(row => [...row]);
   return { type, shape, x: Math.floor(COLS / 2) - Math.floor(shape[0].length / 2), y: 0 };
+}
+
+// Copia profunda de una pieza y la coloca en su posición de aparición.
+function clonePiece(p) {
+  if (!p) return null;
+  return {
+    ...p,
+    shape: p.shape.map(row => row.slice()),
+  };
+}
+
+function toSpawn(p) {
+  p.x = Math.floor(COLS / 2) - Math.floor(p.shape[0].length / 2);
+  p.y = 0;
+  return p;
 }
 
 function makePowerUp() {
@@ -256,6 +307,7 @@ function resolveClears(tSpin) {
 
   comboCount++;
   lines += cleared;
+  energy = Math.min(ENERGY_MAX, energy + (ENERGY_PER_CLEAR[cleared] || 0));
 
   const difficult = cleared === 4 || (tSpin && cleared >= 1);
   const perfect = boardEmpty();
@@ -415,6 +467,7 @@ function ghostY() {
 }
 
 function hardDrop() {
+  snapshotPlacement();
   const gy = ghostY();
   score += (gy - current.y) * 2;
   current.y = gy;
@@ -428,6 +481,7 @@ function softDrop() {
     lastRotation = false;
     updateHUD();
   } else {
+    snapshotPlacement();
     lockPiece();
   }
 }
@@ -499,13 +553,69 @@ function lockPiece() {
 }
 
 function spawn() {
-  current = next;
-  next = nextPiece();
+  current = queue.shift();
+  queue.push(nextPiece());
+  next = queue[0];
   lastRotation = false;
+  holdUsed = false;
+  if (peekLocks > 0) peekLocks--;
   if (collide(current.shape, current.x, current.y)) {
     endGame();
   }
   drawNext();
+}
+
+// ---- Habilidades: snapshot / deshacer / hold ----
+// Se llama en cada ruta de bloqueo ANTES de mutar score/board, para que
+// "deshacer" revierta también los puntos de caída rápida.
+function snapshotPlacement() {
+  if (current.power) return;
+  lastPlacement = {
+    board: board.map(r => r.slice()),
+    current: clonePiece(current),
+    queue: queue.map(clonePiece),
+    score, lines, level, dropInterval, comboCount, b2bActive, b2bCount,
+    nextPowerAt, powerPending, energy, peekLocks,
+    holdPiece: clonePiece(holdPiece), holdUsed, holdUnlocked,
+    challengeTime, garbageAccum,
+  };
+}
+
+function doUndo() {
+  const s = lastPlacement;
+  if (!s) return;
+  board = s.board.map(r => r.slice());
+  queue = s.queue.map(clonePiece);
+  current = toSpawn(clonePiece(s.current));
+  next = queue[0];
+  holdPiece = clonePiece(s.holdPiece);
+  ({ score, lines, level, dropInterval, comboCount, b2bActive, b2bCount,
+     nextPowerAt, powerPending, peekLocks, holdUsed, holdUnlocked,
+     challengeTime, garbageAccum } = s);
+  // energy NO se restaura: la habilidad "deshacer" consume la carga completa.
+  gameOver = false;
+  lastRotation = false;
+  lastPlacement = null;
+  drawNext();
+  drawHold();
+  spawnEffect('DESHACER', COLORS[6], 0, 30);
+}
+
+function doHold() {
+  if (!holdUnlocked || holdUsed || gameOver || paused || abilityMenuOpen) return;
+  if (holdPiece) {
+    const incoming = toSpawn(clonePiece(holdPiece));
+    holdPiece = toSpawn(clonePiece(current));
+    current = incoming;
+    lastRotation = false;
+    if (collide(current.shape, current.x, current.y)) endGame();
+  } else {
+    holdPiece = toSpawn(clonePiece(current));
+    spawn();
+  }
+  holdUsed = true;
+  drawHold();
+  updateHUD();
 }
 
 function updateHUD() {
@@ -531,6 +641,15 @@ function updateHUD() {
   }
 
   goalEl.textContent = challenge ? challengeHud() : '—';
+
+  energyFillEl.style.width = (energy / ENERGY_MAX * 100) + '%';
+  const ready = energy >= ENERGY_MAX;
+  energyTrackEl.classList.toggle('full', ready);
+  const bits = [];
+  if (ready) bits.push('LISTA · pulsa E');
+  if (now < slowUntil) bits.push(`⏳ ${Math.ceil((slowUntil - now) / 1000)}s`);
+  if (peekLocks > 0) bits.push(`👁 ${peekLocks}`);
+  energyHintEl.textContent = bits.join('   ') || '—';
 }
 
 function challengeHud() {
@@ -611,8 +730,46 @@ function draw() {
   if (current.power)
     drawGlyph(ctx, current.x, current.y, BLOCK, POWERUP_GLYPH[current.power]);
 
+  if (peekLocks > 0) drawPeek();
   drawFlash();
   drawEffects();
+}
+
+// Franja con las próximas 5 piezas, superpuesta arriba a la derecha del tablero.
+function drawPeek() {
+  const cell = 12, pad = 8, w = cell * 4 + pad * 2, slot = cell * 3 + 6;
+  const x0 = canvas.width - w - 6, y0 = 6;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(x0, y0, w, slot * QUEUE_LEN + pad);
+  for (let i = 0; i < QUEUE_LEN; i++) {
+    const p = queue[i];
+    if (!p) continue;
+    const sh = p.shape;
+    const ox = x0 + pad + (4 - sh[0].length) * cell / 2;
+    const oy = y0 + pad + i * slot + (3 - sh.length) * cell / 2;
+    for (let r = 0; r < sh.length; r++)
+      for (let c = 0; c < sh[r].length; c++)
+        if (sh[r][c]) {
+          ctx.fillStyle = COLORS[sh[r][c]];
+          ctx.fillRect(ox + c * cell + 1, oy + r * cell + 1, cell - 2, cell - 2);
+        }
+  }
+  ctx.restore();
+}
+
+function drawHold() {
+  const NB = 30;
+  holdCtx.clearRect(0, 0, holdCanvas.width, holdCanvas.height);
+  if (!holdUnlocked) return;
+  if (!holdPiece) return;
+  const shape = holdPiece.shape;
+  const offX = Math.floor((4 - shape[0].length) / 2);
+  const offY = Math.floor((4 - shape.length) / 2);
+  const dim = holdUsed ? 0.35 : 1;
+  for (let r = 0; r < shape.length; r++)
+    for (let c = 0; c < shape[r].length; c++)
+      drawBlock(holdCtx, offX + c, offY + r, shape[r][c], NB, dim);
 }
 
 function drawNext() {
@@ -683,20 +840,85 @@ function setupPreset() {
 }
 
 function togglePause() {
-  if (gameOver) return;
+  if (gameOver || abilityMenuOpen) return;
   paused = !paused;
   if (!paused) {
-    lastTime = performance.now();
-    if (freezeRemaining > 0) freezeUntil = lastTime + freezeRemaining;
-    freezeRemaining = 0;
+    resumeClock();
     loop(lastTime);
   } else {
     cancelAnimationFrame(animId);
     freezeRemaining = Math.max(0, freezeUntil - performance.now());
+    slowRemaining = Math.max(0, slowUntil - performance.now());
     overlayTitle.textContent = 'PAUSA';
     overlayScore.textContent = '';
     overlay.classList.remove('hidden');
   }
+}
+
+// Reseed lastTime y reanuda los temporizadores congelados (freeze / slow).
+function resumeClock() {
+  lastTime = performance.now();
+  if (freezeRemaining > 0) freezeUntil = lastTime + freezeRemaining;
+  if (slowRemaining > 0) slowUntil = lastTime + slowRemaining;
+  freezeRemaining = 0;
+  slowRemaining = 0;
+}
+
+// ---- Menú de habilidades ----
+function openAbilityMenu() {
+  if (energy < ENERGY_MAX || paused || gameOver || abilityMenuOpen) return;
+  abilityMenuOpen = true;
+  cancelAnimationFrame(animId);
+  freezeRemaining = Math.max(0, freezeUntil - performance.now());
+  slowRemaining = Math.max(0, slowUntil - performance.now());
+  for (const btn of abilityListEl.children) {
+    const id = btn.dataset.ability;
+    btn.disabled = (id === 'undo' && !lastPlacement) || (id === 'hold' && holdUnlocked);
+  }
+  abilityMenu.classList.remove('hidden');
+}
+
+function closeAbilityMenu() {
+  if (!abilityMenuOpen) return;
+  abilityMenuOpen = false;
+  abilityMenu.classList.add('hidden');
+  resumeClock();
+  loop(lastTime);
+}
+
+function pickAbility(id) {
+  if (!abilityMenuOpen) return;
+  const btn = [...abilityListEl.children].find(b => b.dataset.ability === id);
+  if (btn && btn.disabled) return;
+  abilityMenuOpen = false;
+  abilityMenu.classList.add('hidden');
+  energy = 0;
+  runAbility(id);
+  resumeClock();
+  updateHUD();
+  loop(lastTime);
+}
+
+function runAbility(id) {
+  if (id === 'peek5') {
+    peekLocks = 5;
+    spawnEffect('VER x5', COLORS[1], 0, 30);
+  } else if (id === 'swap') {
+    let p = randomPiece();
+    while (p.type === current.type) p = randomPiece();
+    if (!collide(p.shape, p.x, p.y)) { current = p; lastRotation = false; }
+    spawnEffect('SWAP', COLORS[4], 0, 30);
+  } else if (id === 'slow') {
+    slowUntil = performance.now() + SLOW_MS;
+    spawnEffect('SLOW', COLORS[3], 0, 30);
+  } else if (id === 'undo') {
+    doUndo();
+  } else if (id === 'hold') {
+    holdUnlocked = true;
+    drawHold();
+    spawnEffect('HOLD ON', COLORS[6], 0, 30);
+  }
+  playSound('clear');
 }
 
 function loop(ts) {
@@ -717,15 +939,17 @@ function loop(ts) {
     if (gameOver) return;
   }
 
+  const eff = performance.now() < slowUntil ? dropInterval * SLOW_FACTOR : dropInterval;
   dropAccum += dt;
   if (frozen) {
     dropAccum = 0;
-  } else if (dropAccum >= dropInterval) {
+  } else if (dropAccum >= eff) {
     dropAccum = 0;
     if (!collide(current.shape, current.x, current.y + 1)) {
       current.y++;
       lastRotation = false;
     } else {
+      snapshotPlacement();
       lockPiece();
     }
   }
@@ -762,21 +986,43 @@ function init() {
   garbageAccum = 0;
   challengeStatus = challenge ? 'playing' : 'none';
   revealUntil = 0;
+  energy = 0;
+  abilityMenuOpen = false;
+  slowUntil = 0;
+  slowRemaining = 0;
+  peekLocks = 0;
+  holdPiece = null;
+  holdUnlocked = false;
+  holdUsed = false;
+  lastPlacement = null;
 
   if (challenge && challenge.setup) challenge.setup();
   challengeDescEl.textContent = challenge ? challenge.desc : '';
 
-  next = nextPiece();
+  queue = [];
+  for (let i = 0; i < QUEUE_LEN; i++) queue.push(nextPiece());
   spawn();
   updateHUD();
+  drawHold();
   overlay.classList.add('hidden');
+  abilityMenu.classList.add('hidden');
   cancelAnimationFrame(animId);
   animId = requestAnimationFrame(loop);
 }
 
 document.addEventListener('keydown', e => {
+  if (abilityMenuOpen) {
+    if (e.code === 'Escape' || e.code === 'KeyE') closeAbilityMenu();
+    else if (/^(Digit|Numpad)[1-5]$/.test(e.code)) {
+      const a = ABILITIES[+e.code.slice(-1) - 1];
+      if (a) pickAbility(a.id);
+    }
+    return;
+  }
   if (e.code === 'KeyP') { togglePause(); return; }
   if (paused || gameOver) return;
+  if (e.code === 'KeyE') { openAbilityMenu(); return; }
+  if (e.code === 'KeyC') { doHold(); return; }
   switch (e.code) {
     case 'ArrowLeft':
       if (!collide(current.shape, current.x - 1, current.y)) { current.x--; lastRotation = false; }
@@ -816,4 +1062,5 @@ challengeSelect.addEventListener('change', () => {
 initTheme();
 initSound();
 initChallengeUI();
+initAbilityMenu();
 init();
