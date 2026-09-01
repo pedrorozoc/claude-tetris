@@ -94,7 +94,7 @@ All game logic lives in `game.js` as a single top-level script under
   `#ability-menu`): `resolveClears()` suma `ENERGY_PER_CLEAR[cleared]` a `energy`
   (cap `ENERGY_MAX = 100`). Con la barra llena, `E` abre `openAbilityMenu()`, que
   cancela la RAF (congela como la pausa) y marca deshabilitados los botones
-  `undo` (sin `lastPlacement`) y `hold` (si ya `holdUnlocked`). Teclas `1`–`5` o
+  `undo` (sin `lastPlacement`). Teclas `1`–`4` o
   click → `pickAbility()` → `energy = 0` → `runAbility()` → `resumeClock()` +
   `loop()`. `Esc`/`E` = `closeAbilityMenu()` sin gastar. `resumeClock()`
   centraliza el reseed de `lastTime` y la restauración de `freezeUntil`/
@@ -113,9 +113,13 @@ All game logic lives in `game.js` as a single top-level script under
     normales (`if (current.power) return`); `doUndo()` restaura board, cola,
     `current` (reposicionada a spawn), score/lines/level/combo/B2B, `holdPiece`,
     `peekLocks`, y estado de Desafío. `energy` NO se restaura. Un solo uso.
-  - **hold**: pone `holdUnlocked = true`. Después, `C` llama `doHold()` con la
-    regla clásica (`holdUsed`, reset en `spawn()`); `drawHold()` pinta la pieza
-    reservada en `#hold-canvas` (atenuada si `holdUsed`).
+- **Hold** (mecánica base, disponible desde el primer spawn): `C` o `Shift`
+  llaman a `doHold()`, que intercambia `current` con `holdPiece` (o lo llena y
+  hace `spawn()` si está vacío). Bloqueado a un uso por pieza vía `holdUsed`
+  (reset en cada `spawn()`); `snapshotPlacement()`/`doUndo()` restauran
+  `holdPiece`/`holdUsed` igual que el resto del estado. `drawHold()` pinta la
+  pieza reservada en `#hold-canvas`, la deja vacía si no hay ninguna, y
+  atenúa el dibujo (`dim = 0.35`) cuando `holdUsed` es `true`.
 - **Pause** (`togglePause`) cancels the RAF, shows the overlay, and on resume
   reseeds `lastTime` before restarting `loop` so no huge `dt` is accumulated.
 - HUD (`updateHUD`) is refreshed ad hoc from several call sites (keydown handler,

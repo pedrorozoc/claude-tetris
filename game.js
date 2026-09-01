@@ -31,7 +31,6 @@ const ABILITIES = [
   { id: 'swap',  name: 'Intercambiar pieza', desc: 'Cambia la pieza actual por otra aleatoria del pool.' },
   { id: 'slow',  name: 'Ralentizar tiempo',  desc: 'La caída va 3x más lenta durante 10s.' },
   { id: 'undo',  name: 'Deshacer',           desc: 'Revierte tu última colocación.' },
-  { id: 'hold',  name: 'Reservar pieza',     desc: 'Desbloquea el hold permanente (tecla C).' },
 ];
 const POWERUP_GLYPH = { bomb: '💣', ray: '⚡', dye: '🎨', gravity: '⬇', freeze: '❄' };
 const POWERUP_NAME = { bomb: 'BOMBA', ray: 'RAYO', dye: 'TINTE', gravity: 'GRAVEDAD', freeze: 'CONGELAR' };
@@ -124,7 +123,7 @@ let freezeUntil, freezeRemaining, powerPending, nextPowerAt;
 let comboCount, b2bActive, b2bCount, lastRotation, flashUntil;
 let challenge, challengeTime, garbageAccum, challengeStatus, revealUntil;
 let energy, abilityMenuOpen, slowUntil, slowRemaining;
-let queue, peekLocks, holdPiece, holdUnlocked, holdUsed, lastPlacement;
+let queue, peekLocks, holdPiece, holdUsed, lastPlacement;
 const effects = [];
 let soundOn = true;
 let audioCtx = null;
@@ -548,7 +547,7 @@ function lockPiece() {
   if (current.power) applyPowerUp(current.power, current.x, current.y);
   if (challenge && challenge.hideSettled) revealUntil = performance.now() + 500;
   resolveClears(tSpin);
-  if (challengeStatus !== 'playing' || gameOver) return;
+  if ((challenge && challengeStatus !== 'playing') || gameOver) return;
   spawn();
 }
 
@@ -565,7 +564,7 @@ function spawn() {
   drawNext();
 }
 
-// ---- Habilidades: snapshot / deshacer / hold ----
+// ---- Snapshot / deshacer / hold ----
 // Se llama en cada ruta de bloqueo ANTES de mutar score/board, para que
 // "deshacer" revierta también los puntos de caída rápida.
 function snapshotPlacement() {
@@ -576,7 +575,7 @@ function snapshotPlacement() {
     queue: queue.map(clonePiece),
     score, lines, level, dropInterval, comboCount, b2bActive, b2bCount,
     nextPowerAt, powerPending, energy, peekLocks,
-    holdPiece: clonePiece(holdPiece), holdUsed, holdUnlocked,
+    holdPiece: clonePiece(holdPiece), holdUsed,
     challengeTime, garbageAccum,
   };
 }
@@ -590,7 +589,7 @@ function doUndo() {
   next = queue[0];
   holdPiece = clonePiece(s.holdPiece);
   ({ score, lines, level, dropInterval, comboCount, b2bActive, b2bCount,
-     nextPowerAt, powerPending, peekLocks, holdUsed, holdUnlocked,
+     nextPowerAt, powerPending, peekLocks, holdUsed,
      challengeTime, garbageAccum } = s);
   // energy NO se restaura: la habilidad "deshacer" consume la carga completa.
   gameOver = false;
@@ -602,7 +601,7 @@ function doUndo() {
 }
 
 function doHold() {
-  if (!holdUnlocked || holdUsed || gameOver || paused || abilityMenuOpen) return;
+  if (holdUsed || gameOver || paused || abilityMenuOpen) return;
   if (holdPiece) {
     const incoming = toSpawn(clonePiece(holdPiece));
     holdPiece = toSpawn(clonePiece(current));
@@ -761,7 +760,6 @@ function drawPeek() {
 function drawHold() {
   const NB = 30;
   holdCtx.clearRect(0, 0, holdCanvas.width, holdCanvas.height);
-  if (!holdUnlocked) return;
   if (!holdPiece) return;
   const shape = holdPiece.shape;
   const offX = Math.floor((4 - shape[0].length) / 2);
@@ -873,7 +871,7 @@ function openAbilityMenu() {
   slowRemaining = Math.max(0, slowUntil - performance.now());
   for (const btn of abilityListEl.children) {
     const id = btn.dataset.ability;
-    btn.disabled = (id === 'undo' && !lastPlacement) || (id === 'hold' && holdUnlocked);
+    btn.disabled = (id === 'undo' && !lastPlacement);
   }
   abilityMenu.classList.remove('hidden');
 }
@@ -913,10 +911,6 @@ function runAbility(id) {
     spawnEffect('SLOW', COLORS[3], 0, 30);
   } else if (id === 'undo') {
     doUndo();
-  } else if (id === 'hold') {
-    holdUnlocked = true;
-    drawHold();
-    spawnEffect('HOLD ON', COLORS[6], 0, 30);
   }
   playSound('clear');
 }
@@ -992,7 +986,6 @@ function init() {
   slowRemaining = 0;
   peekLocks = 0;
   holdPiece = null;
-  holdUnlocked = false;
   holdUsed = false;
   lastPlacement = null;
 
@@ -1022,7 +1015,7 @@ document.addEventListener('keydown', e => {
   if (e.code === 'KeyP') { togglePause(); return; }
   if (paused || gameOver) return;
   if (e.code === 'KeyE') { openAbilityMenu(); return; }
-  if (e.code === 'KeyC') { doHold(); return; }
+  if (e.code === 'KeyC' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') { doHold(); return; }
   switch (e.code) {
     case 'ArrowLeft':
       if (!collide(current.shape, current.x - 1, current.y)) { current.x--; lastRotation = false; }
