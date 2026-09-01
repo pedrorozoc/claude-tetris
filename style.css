@@ -126,6 +126,11 @@ body {
   letter-spacing: 1px;
 }
 
+.value.value-sm {
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
 #next-canvas {
   display: block;
   border: 1px solid var(--board-border);

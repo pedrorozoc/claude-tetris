@@ -44,9 +44,19 @@ All game logic lives in `game.js` as a single top-level script under
   grid, settled board, ghost, then current piece. No dirty-rect optimization.
 - **Rotation with wall kicks**: `tryRotate` rotates, then tries horizontal
   offsets `[0, -1, 1, -2, 2]` and keeps the first that doesn't `collide`.
-- **Lock / spawn cycle**: `lockPiece` -> `merge` -> `clearLines` -> `spawn`.
-  `spawn` promotes `next` to `current`, rolls a new `next`, and if the new piece
-  already collides it calls `endGame()` (that is the only game-over check).
+- **Lock / spawn cycle**: `lockPiece` -> `merge` -> (`applyPowerUp` if
+  `current.power`) -> `clearLines` -> `spawn`. `spawn` promotes `next` to
+  `current`, rolls a new `next` via `nextPiece()`, and if the new piece already
+  collides it calls `endGame()` (that is the only game-over check).
+- **Power-ups**: every `POWER_EVERY` (5) cleared lines, `clearLines` sets
+  `powerPending`; the next `nextPiece()` returns a 1x1 block (`type: 9`,
+  `shape: [[9]]`, `power: <kind>`) from `makePowerUp()` instead of `randomPiece()`
+  — it is NOT in `PIECES`, so the normal 1..8 bag is untouched. On lock,
+  `applyPowerUp` clears the origin cell then runs one of `pwBomb` / `pwRay` /
+  `pwDye` / `pwGravity` / sets `freezeUntil`. `freeze` suspends auto-fall in
+  `loop` for `FREEZE_MS`; `togglePause` preserves the remaining freeze via
+  `freezeRemaining`. Glyphs (`POWERUP_GLYPH`) are drawn by `drawGlyph` over the
+  falling piece and the NEXT preview only (value 9 never stays on `board`).
 - **Pause** (`togglePause`) cancels the RAF, shows the overlay, and on resume
   reseeds `lastTime` before restarting `loop` so no huge `dt` is accumulated.
 - HUD (`updateHUD`) is refreshed ad hoc from several call sites (keydown handler,
