@@ -57,6 +57,21 @@ All game logic lives in `game.js` as a single top-level script under
   `loop` for `FREEZE_MS`; `togglePause` preserves the remaining freeze via
   `freezeRemaining`. Glyphs (`POWERUP_GLYPH`) are drawn by `drawGlyph` over the
   falling piece and the NEXT preview only (value 9 never stays on `board`).
+- **Combos y multiplicadores**: `resolveClears(tSpin)` (llamado desde
+  `lockPiece`, sustituye al viejo `clearLines`) hace `clearFullRows()` y luego
+  puntúa. `comboCount` arranca en `-1`, sube en cada lock que limpia >=1 línea y
+  vuelve a `-1` en un lock sin líneas; el multiplicador es `comboCount + 1` a
+  partir del 2º clear encadenado (x2, x3...). `detectTSpin()` marca T-spin si la
+  última acción fue rotar (`lastRotation`, que se pone a `false` en cualquier
+  traslación/gravedad/spawn y a `true` en `tryRotate`), la pieza es la T (tipo 3)
+  y >=3 de sus 4 esquinas diagonales están bloqueadas. Un clear es "difícil"
+  (Tetris o T-spin con línea) y aplica B2B (`b2bActive`, x1.5) si el anterior
+  difícil sigue la cadena; un lock sin líneas NO rompe B2B, un clear normal sí.
+  Perfect Clear (`boardEmpty()` tras limpiar) suma `PERFECT_SCORES[cleared]`.
+  Fórmula: `round(base * level * comboMult) (+ perfect)`. Efectos: `announceClears`
+  encola textos flotantes en `effects[]` (render `drawEffects`), dispara
+  `flashUntil` (render `drawFlash`) y `playSound` (Web Audio, sin assets;
+  interruptor SONIDO en el panel, persistido en `localStorage` `tetris-sound`).
 - **Pause** (`togglePause`) cancels the RAF, shows the overlay, and on resume
   reseeds `lastTime` before restarting `loop` so no huge `dt` is accumulated.
 - HUD (`updateHUD`) is refreshed ad hoc from several call sites (keydown handler,
