@@ -106,6 +106,30 @@
         <p class="ability-cancel"><kbd>Esc</kbd> para cancelar</p>
       </div>
     </div>
+
+    <div id="pause-menu" class="overlay hidden">
+      <div class="overlay-box pause-box">
+        <p class="ability-title">PAUSA</p>
+        <div class="pause-menu-list">
+          <button id="resume-btn">Reanudar</button>
+          <button id="pause-restart-btn">Reiniciar</button>
+          <button id="show-controls-btn">Ver controles</button>
+        </div>
+        <label class="pause-level">
+          <span class="label">NIVEL INICIAL</span>
+          <select id="start-level-select" class="challenge-select"></select>
+        </label>
+        <ul id="pause-controls" class="pause-controls hidden">
+          <li><kbd>&larr;</kbd><kbd>&rarr;</kbd> mover</li>
+          <li><kbd>&uarr;</kbd> / <kbd>X</kbd> rotar</li>
+          <li><kbd>&darr;</kbd> bajar</li>
+          <li><kbd>Space</kbd> caída dura</li>
+          <li><kbd>C</kbd> / <kbd>Shift</kbd> reservar</li>
+          <li><kbd>E</kbd> habilidad</li>
+          <li><kbd>P</kbd> / <kbd>Esc</kbd> pausa</li>
+        </ul>
+      </div>
+    </div>
   </div>
 
   <script src="game.js"></script>

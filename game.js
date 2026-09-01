@@ -54,6 +54,7 @@ const PERFECT_SCORES = [0, 800, 1200, 1800, 2000];
 const B2B_MULT = 1.5;
 const SOUND_KEY = 'tetris-sound';
 const CHALLENGE_KEY = 'tetris-challenge';
+const START_LEVEL_KEY = 'tetris-start-level';
 const GARBAGE_COLOR = 8;
 
 // Modo desafío: cada entrada define objetivo y/o modificador de reglas.
@@ -114,6 +115,12 @@ const holdCanvas = document.getElementById('hold-canvas');
 const holdCtx = holdCanvas.getContext('2d');
 const abilityMenu = document.getElementById('ability-menu');
 const abilityListEl = document.getElementById('ability-list');
+const pauseMenu = document.getElementById('pause-menu');
+const startLevelSelect = document.getElementById('start-level-select');
+const resumeBtn = document.getElementById('resume-btn');
+const pauseRestartBtn = document.getElementById('pause-restart-btn');
+const showControlsBtn = document.getElementById('show-controls-btn');
+const pauseControlsEl = document.getElementById('pause-controls');
 
 const THEME_KEY = 'tetris-theme';
 
@@ -124,6 +131,7 @@ let comboCount, b2bActive, b2bCount, lastRotation, flashUntil;
 let challenge, challengeTime, garbageAccum, challengeStatus, revealUntil;
 let energy, abilityMenuOpen, slowUntil, slowRemaining;
 let queue, peekLocks, holdPiece, holdUsed, lastPlacement;
+let startLevel = 1;
 const effects = [];
 let soundOn = true;
 let audioCtx = null;
@@ -154,6 +162,20 @@ function initChallengeUI() {
   }
   const saved = localStorage.getItem(CHALLENGE_KEY);
   challengeSelect.value = CHALLENGE_BY_ID[saved] ? saved : 'classic';
+}
+
+// Nivel inicial 1-15, persistido. Solo afecta a la PRÓXIMA partida.
+function initStartLevel() {
+  startLevelSelect.innerHTML = '';
+  for (let i = 1; i <= 15; i++) {
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = String(i);
+    startLevelSelect.appendChild(opt);
+  }
+  const saved = parseInt(localStorage.getItem(START_LEVEL_KEY), 10);
+  startLevel = saved >= 1 && saved <= 15 ? saved : 1;
+  startLevelSelect.value = String(startLevel);
 }
 
 function fmtTime(ms) {
@@ -326,7 +348,7 @@ function resolveClears(tSpin) {
 
   announceClears({ cleared, tSpin, difficult, perfect, b2bApplied, comboMult, gained });
 
-  level = Math.floor(lines / 10) + 1 + (challenge && challenge.level ? challenge.level - 1 : 0);
+  level = Math.floor(lines / 10) + 1 + (challenge && challenge.level ? challenge.level - 1 : 0) + (startLevel - 1);
   dropInterval = Math.max(100, 1000 - (level - 1) * 90);
   if (lines >= nextPowerAt) {
     powerPending = true;
@@ -841,15 +863,16 @@ function togglePause() {
   if (gameOver || abilityMenuOpen) return;
   paused = !paused;
   if (!paused) {
+    pauseMenu.classList.add('hidden');
+    pauseControlsEl.classList.add('hidden');
+    startLevelSelect.blur();
     resumeClock();
     loop(lastTime);
   } else {
     cancelAnimationFrame(animId);
     freezeRemaining = Math.max(0, freezeUntil - performance.now());
     slowRemaining = Math.max(0, slowUntil - performance.now());
-    overlayTitle.textContent = 'PAUSA';
-    overlayScore.textContent = '';
-    overlay.classList.remove('hidden');
+    pauseMenu.classList.remove('hidden');
   }
 }
 
@@ -957,13 +980,18 @@ function init() {
   challenge = CHALLENGE_BY_ID[challengeSelect.value] || null;
   if (challenge && challenge.id === 'classic') challenge = null;
 
+  startLevel = parseInt(startLevelSelect.value, 10) || 1;
+
   board = createBoard();
   score = 0;
   lines = 0;
-  level = challenge && challenge.level ? challenge.level : 1;
+  // Nivel inicial del jugador combinado con el preset de desafío (offset).
+  level = startLevel + (challenge && challenge.level ? challenge.level - 1 : 0);
   paused = false;
   gameOver = false;
-  dropInterval = challenge && challenge.dropInterval ? challenge.dropInterval : 1000;
+  dropInterval = challenge && challenge.dropInterval
+    ? challenge.dropInterval
+    : Math.max(100, 1000 - (level - 1) * 90);
   dropAccum = 0;
   lastTime = performance.now();
   freezeUntil = 0;
@@ -999,6 +1027,8 @@ function init() {
   drawHold();
   overlay.classList.add('hidden');
   abilityMenu.classList.add('hidden');
+  pauseMenu.classList.add('hidden');
+  pauseControlsEl.classList.add('hidden');
   cancelAnimationFrame(animId);
   animId = requestAnimationFrame(loop);
 }
@@ -1012,7 +1042,11 @@ document.addEventListener('keydown', e => {
     }
     return;
   }
-  if (e.code === 'KeyP') { togglePause(); return; }
+  // Escape con el <select> de nivel enfocado solo cierra su desplegable nativo.
+  if ((e.code === 'KeyP' || e.code === 'Escape') && e.target !== startLevelSelect) {
+    togglePause();
+    return;
+  }
   if (paused || gameOver) return;
   if (e.code === 'KeyE') { openAbilityMenu(); return; }
   if (e.code === 'KeyC' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') { doHold(); return; }
@@ -1052,8 +1086,23 @@ challengeSelect.addEventListener('change', () => {
   init();
 });
 
+// Nivel inicial: solo se persiste; init() lo relee, así afecta a la PRÓXIMA
+// partida y no altera la velocidad de la partida en curso.
+startLevelSelect.addEventListener('change', () => {
+  localStorage.setItem(START_LEVEL_KEY, startLevelSelect.value);
+  startLevelSelect.blur();
+});
+// blur() suelta el foco del botón para que las teclas siguientes no lo re-disparen.
+resumeBtn.addEventListener('click', () => { resumeBtn.blur(); togglePause(); });
+pauseRestartBtn.addEventListener('click', () => { pauseRestartBtn.blur(); init(); });
+showControlsBtn.addEventListener('click', () => {
+  showControlsBtn.blur();
+  pauseControlsEl.classList.toggle('hidden');
+});
+
 initTheme();
 initSound();
 initChallengeUI();
+initStartLevel();
 initAbilityMenu();
 init();
