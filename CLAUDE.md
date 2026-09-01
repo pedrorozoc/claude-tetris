@@ -31,9 +31,11 @@ All game logic lives in `game.js` as a single top-level script under
   every one of them and is the single entry point — it runs on load and on
   Restart.
 - **Piece cell value doubles as the color index.** A shape matrix stores `0` for
-  empty or `1..7` for filled; that same integer indexes `COLORS` and is written
+  empty or `1..8` for filled; that same integer indexes `COLORS` and is written
   straight into `board` on merge. `rotateCW` preserves the values, so rotation,
-  collision, merge, and rendering all key off one number.
+  collision, merge, and rendering all key off one number. Type `8` is the "nut"
+  (tuerca) challenge piece: a 3x3 ring with a `0` hole in the centre, so its
+  empty middle cell blocks line clears until another piece fills it from above.
 - **`board`** is a `ROWS x COLS` array of those integers. `clearLines` mutates it
   in place with `splice` + `unshift` (drop a full row, prepend an empty one).
 - **Game loop** (`loop`) is a `requestAnimationFrame` callback that accumulates
